@@ -13,7 +13,8 @@ interface Props {
   onGeneratePractice: (selected: VocabularyItem[]) => void;
   onSaveVocab: (item: VocabularyItem | VocabularyItem[]) => void;
   savedTermIds: Set<string>;
-  onSaveAnalysis: () => void;
+  onSaveAnalysis: (notes: Note[]) => void;
+  initialNotes?: Note[];
 }
 
 const CATEGORY_CONFIG: Record<VocabularyCategory, { label: string; color: string; icon: React.ReactNode }> = {
@@ -44,7 +45,7 @@ const CATEGORY_CONFIG: Record<VocabularyCategory, { label: string; color: string
   }
 };
 
-const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, savedTermIds, onSaveAnalysis }) => {
+const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, savedTermIds, onSaveAnalysis, initialNotes = [] }) => {
   const [selectedTerms, setSelectedTerms] = useState<Set<string>>(new Set());
   const [playingText, setPlayingText] = useState<string | null>(null);
   const [isTocOpen, setIsTocOpen] = useState(true);
@@ -57,8 +58,8 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
   // Word Lookup State
   const [lookupState, setLookupState] = useState<{ word: string; context: string; position: { x: number; y: number } } | null>(null);
 
-  // Notes State
-  const [notes, setNotes] = useState<Note[]>([]);
+  // Notes State - initialize with saved notes
+  const [notes, setNotes] = useState<Note[]>(initialNotes);
 
   // Track flashcard index per category
   const [categoryIndices, setCategoryIndices] = useState<Record<string, number>>({});
@@ -67,6 +68,11 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
 
   // Ref for the content to export
   const exportContentRef = useRef<HTMLDivElement>(null);
+
+  // Reset notes when loading a different analysis
+  useEffect(() => {
+    setNotes(initialNotes);
+  }, [initialNotes]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -191,7 +197,7 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
   };
 
   const handleSaveAnalysisClick = () => {
-    onSaveAnalysis();
+    onSaveAnalysis(notes);
     setSavedAnalysis(true);
     setTimeout(() => setSavedAnalysis(false), 2000);
   };

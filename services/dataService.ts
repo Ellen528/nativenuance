@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient';
-import { SavedAnalysis, SavedVocabularyItem, SourceType } from '../types';
+import { SavedAnalysis, SavedVocabularyItem, SourceType, Note } from '../types';
 
 // Database row types (matching Supabase schema)
 interface DbSavedAnalysis {
@@ -10,7 +10,14 @@ interface DbSavedAnalysis {
   input_text: string;
   analysis_result: object;
   file_name: string | null;
+  notes: object | null;
   created_at: string;
+}
+
+interface DbUserVisit {
+  id: string;
+  user_id: string;
+  visited_at: string;
 }
 
 interface DbSavedVocabulary {
@@ -35,6 +42,7 @@ const dbToAnalysis = (row: DbSavedAnalysis): SavedAnalysis => ({
   inputText: row.input_text,
   analysisResult: row.analysis_result as SavedAnalysis['analysisResult'],
   fileName: row.file_name,
+  notes: (row.notes as Note[]) || [],
 });
 
 const dbToVocabulary = (row: DbSavedVocabulary): SavedVocabularyItem => ({
@@ -73,7 +81,7 @@ export const dataService = {
   },
 
   /**
-   * Save a new analysis
+   * Save a new analysis or update existing one
    */
   async saveAnalysis(userId: string, analysis: SavedAnalysis): Promise<SavedAnalysis | null> {
     if (!supabase) {
@@ -93,6 +101,7 @@ export const dataService = {
         input_text: analysis.inputText,
         analysis_result: analysis.analysisResult,
         file_name: analysis.fileName || null,
+        notes: analysis.notes || [],
       })
       .select()
       .single();
@@ -103,6 +112,41 @@ export const dataService = {
     }
 
     console.log('Analysis saved successfully to Supabase!', data);
+    return dbToAnalysis(data);
+  },
+
+  /**
+   * Update an existing analysis
+   */
+  async updateAnalysis(userId: string, analysis: SavedAnalysis): Promise<SavedAnalysis | null> {
+    if (!supabase) {
+      console.warn('Supabase not configured, skipping cloud update');
+      return null;
+    }
+
+    console.log('Updating analysis in Supabase...', { userId, analysisId: analysis.id });
+
+    const { data, error } = await supabase
+      .from('saved_analyses')
+      .update({
+        date: analysis.date,
+        source_type: analysis.sourceType,
+        input_text: analysis.inputText,
+        analysis_result: analysis.analysisResult,
+        file_name: analysis.fileName || null,
+        notes: analysis.notes || [],
+      })
+      .eq('id', analysis.id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating analysis in Supabase:', error);
+      return null;
+    }
+
+    console.log('Analysis updated successfully in Supabase!', data);
     return dbToAnalysis(data);
   },
 
@@ -278,6 +322,59 @@ export const dataService = {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  },
+
+  // ==================== USER VISITS ====================
+
+  /**
+   * Record a user visit
+   */
+  async recordVisit(userId: string): Promise<void> {
+    if (!supabase) return;
+
+    const { error } = await supabase
+      .from('user_visits')
+      .insert({
+        id: crypto.randomUUID(),
+        user_id: userId,
+        visited_at: new Date().toISOString(),
+      });
+
+    if (error) {
+      console.error('Error recording visit:', error);
+    }
+  },
+
+  /**
+   * Fetch user visits for a given month
+   */
+  async fetchVisits(userId: string, year: number, month: number): Promise<{ date: string; count: number }[]> {
+    if (!supabase) return [];
+
+    // Get start and end of the month
+    const startDate = new Date(year, month, 1);
+    const endDate = new Date(year, month + 1, 0, 23, 59, 59, 999);
+
+    const { data, error } = await supabase
+      .from('user_visits')
+      .select('visited_at')
+      .eq('user_id', userId)
+      .gte('visited_at', startDate.toISOString())
+      .lte('visited_at', endDate.toISOString());
+
+    if (error) {
+      console.error('Error fetching visits:', error);
+      return [];
+    }
+
+    // Aggregate visits by date
+    const visitCounts: Record<string, number> = {};
+    (data || []).forEach((row: { visited_at: string }) => {
+      const date = row.visited_at.split('T')[0]; // YYYY-MM-DD
+      visitCounts[date] = (visitCounts[date] || 0) + 1;
+    });
+
+    return Object.entries(visitCounts).map(([date, count]) => ({ date, count }));
   },
 };
 

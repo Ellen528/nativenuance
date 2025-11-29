@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { analyzeText, generatePractice, generateTopicStrategy } from './services/geminiService';
-import { AnalysisResult, SourceType, VocabularyItem, GeneratedPractice, AppMode, SavedVocabularyItem, SavedAnalysis } from './types';
+import { AnalysisResult, SourceType, VocabularyItem, GeneratedPractice, AppMode, SavedVocabularyItem, SavedAnalysis, Note } from './types';
 import AnalysisView from './components/AnalysisView';
 import PracticeView from './components/PracticeView';
 import HistoryView from './components/HistoryView';
@@ -55,6 +55,7 @@ const AppContent: React.FC = () => {
   const [savedItems, setSavedItems] = useState<SavedVocabularyItem[]>([]);
   const [savedAnalyses, setSavedAnalyses] = useState<SavedAnalysis[]>([]);
   const [isDataLoading, setIsDataLoading] = useState(false);
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
 
   const resultRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +86,9 @@ const AppContent: React.FC = () => {
   const loadCloudData = useCallback(async (userId: string) => {
     setIsDataLoading(true);
     try {
+      // Record user visit
+      await dataService.recordVisit(userId);
+
       const [cloudAnalyses, cloudVocabulary] = await Promise.all([
         dataService.fetchAnalyses(userId),
         dataService.fetchVocabulary(userId),
@@ -179,25 +183,53 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const saveAnalysis = async () => {
+  const saveAnalysis = async (notes: Note[] = []) => {
     if (!analysisResult) return;
 
-    const newAnalysis: SavedAnalysis = {
-      id: crypto.randomUUID(), // Generate proper UUID for Supabase
-      date: Date.now(),
-      sourceType,
-      inputText,
-      analysisResult,
-      fileName
-    };
+    // Check if an analysis with the same inputText already exists
+    const existingAnalysis = savedAnalyses.find(a => a.inputText === inputText);
 
-    const newHistory = [newAnalysis, ...savedAnalyses];
-    setSavedAnalyses(newHistory);
-    localStorage.setItem('nativeNuance_analysisHistory', JSON.stringify(newHistory));
+    if (existingAnalysis) {
+      // Update existing analysis
+      const updatedAnalysis: SavedAnalysis = {
+        ...existingAnalysis,
+        date: Date.now(),
+        sourceType,
+        analysisResult,
+        fileName,
+        notes
+      };
 
-    // Sync to cloud if authenticated
-    if (isAuthenticated && user) {
-      await dataService.saveAnalysis(user.id, newAnalysis);
+      const newHistory = savedAnalyses.map(a => 
+        a.id === existingAnalysis.id ? updatedAnalysis : a
+      );
+      setSavedAnalyses(newHistory);
+      localStorage.setItem('nativeNuance_analysisHistory', JSON.stringify(newHistory));
+
+      // Sync to cloud if authenticated
+      if (isAuthenticated && user) {
+        await dataService.updateAnalysis(user.id, updatedAnalysis);
+      }
+    } else {
+      // Create new analysis
+      const newAnalysis: SavedAnalysis = {
+        id: crypto.randomUUID(),
+        date: Date.now(),
+        sourceType,
+        inputText,
+        analysisResult,
+        fileName,
+        notes
+      };
+
+      const newHistory = [newAnalysis, ...savedAnalyses];
+      setSavedAnalyses(newHistory);
+      localStorage.setItem('nativeNuance_analysisHistory', JSON.stringify(newHistory));
+
+      // Sync to cloud if authenticated
+      if (isAuthenticated && user) {
+        await dataService.saveAnalysis(user.id, newAnalysis);
+      }
     }
   };
 
@@ -206,6 +238,7 @@ const AppContent: React.FC = () => {
     setSourceType(analysis.sourceType);
     setAnalysisResult(analysis.analysisResult);
     setFileName(analysis.fileName || null);
+    setCurrentAnalysisId(analysis.id);
     setMode(AppMode.ANALYZE_TEXT);
     setStatus('complete');
   };
@@ -230,6 +263,7 @@ const AppContent: React.FC = () => {
     setAnalysisResult(null);
     setInputText('');
     setFileName(null);
+    setCurrentAnalysisId(null);
     setMode(AppMode.ANALYZE_TEXT);
     setStatus('idle');
   };
@@ -640,6 +674,7 @@ const AppContent: React.FC = () => {
                         onSaveVocab={saveToHistory}
                         savedTermIds={new Set(savedItems.map(i => i.term))}
                         onSaveAnalysis={saveAnalysis}
+                        initialNotes={currentAnalysisId ? savedAnalyses.find(a => a.id === currentAnalysisId)?.notes || [] : []}
                       />
                     </div>
                   </div>

@@ -3,6 +3,7 @@ import { SavedAnalysis } from '../types';
 import { Plus, MessageSquare, Trash2, ChevronLeft, Sparkles, LogOut, LogIn, Download, Cloud, CloudOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import AuthModal from './AuthModal';
+import CalendarHeatmap from './CalendarHeatmap';
 
 interface Props {
     savedAnalyses: SavedAnalysis[];
@@ -16,6 +17,7 @@ interface Props {
 
 const Sidebar: React.FC<Props> = ({ savedAnalyses, onLoadAnalysis, onNewAnalysis, onRemoveAnalysis, isOpen, toggleSidebar, onExportData }) => {
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+    const [isHeatmapOpen, setIsHeatmapOpen] = useState(false);
     const { user, isAuthenticated, signOut, isLoading } = useAuth();
 
     const handleSignOut = async () => {
@@ -141,9 +143,13 @@ const Sidebar: React.FC<Props> = ({ savedAnalyses, onLoadAnalysis, onNewAnalysis
                     ) : isAuthenticated ? (
                         <div className="space-y-2">
                             <div className="flex items-center gap-3 px-2 py-2">
-                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-blue-500 flex items-center justify-center text-white font-bold text-xs shadow-lg">
+                                <button
+                                    onClick={() => setIsHeatmapOpen(true)}
+                                    className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-blue-500 flex items-center justify-center text-white font-bold text-xs shadow-lg hover:ring-2 hover:ring-emerald-400 hover:ring-offset-2 hover:ring-offset-slate-900 transition-all cursor-pointer"
+                                    title="View activity"
+                                >
                                     {getUserInitial()}
-                                </div>
+                                </button>
                                 <div className="flex-1 min-w-0">
                                     <div className="text-sm font-medium text-slate-200 truncate">
                                         {getUserDisplay()}
@@ -176,6 +182,15 @@ const Sidebar: React.FC<Props> = ({ savedAnalyses, onLoadAnalysis, onNewAnalysis
                 isOpen={isAuthModalOpen} 
                 onClose={() => setIsAuthModalOpen(false)} 
             />
+
+            {/* Calendar Heatmap Modal */}
+            {user && (
+                <CalendarHeatmap
+                    userId={user.id}
+                    isOpen={isHeatmapOpen}
+                    onClose={() => setIsHeatmapOpen(false)}
+                />
+            )}
         </>
     );
 };
