@@ -79,4 +79,12 @@ export interface SavedAnalysis {
   analysisResult: AnalysisResult;
   fileName?: string | null;
   notes?: Note[];
+  folderId?: string | null;
+}
+
+export interface AnalysisFolder {
+  id: string;
+  name: string;
+  createdAt: number;
+  color?: string;
 }
