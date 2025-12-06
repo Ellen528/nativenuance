@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { SavedAnalysis } from '../types';
-import { Plus, MessageSquare, Trash2, ChevronLeft, Sparkles, LogOut, LogIn, Download, Cloud, CloudOff } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, ChevronLeft, Sparkles, LogOut, LogIn, Download, Cloud, CloudOff, History, FolderOpen } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import AuthModal from './AuthModal';
 import CalendarHeatmap from './CalendarHeatmap';
@@ -13,9 +13,11 @@ interface Props {
     isOpen: boolean;
     toggleSidebar: () => void;
     onExportData?: () => void;
+    onOpenHistory?: () => void;
+    isHistoryActive?: boolean;
 }
 
-const Sidebar: React.FC<Props> = ({ savedAnalyses, onLoadAnalysis, onNewAnalysis, onRemoveAnalysis, isOpen, toggleSidebar, onExportData }) => {
+const Sidebar: React.FC<Props> = ({ savedAnalyses, onLoadAnalysis, onNewAnalysis, onRemoveAnalysis, isOpen, toggleSidebar, onExportData, onOpenHistory, isHistoryActive }) => {
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
     const [isHeatmapOpen, setIsHeatmapOpen] = useState(false);
     const { user, isAuthenticated, signOut, isLoading } = useAuth();
@@ -61,13 +63,29 @@ const Sidebar: React.FC<Props> = ({ savedAnalyses, onLoadAnalysis, onNewAnalysis
                         <span className="font-serif font-bold text-white text-lg tracking-tight">NativeNuance</span>
                     </div>
 
-                    <button
-                        onClick={onNewAnalysis}
-                        className="w-full flex items-center gap-2 px-3 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all shadow-lg hover:shadow-emerald-900/20 font-medium text-sm"
-                    >
-                        <Plus className="w-4 h-4" />
-                        New Analysis
-                    </button>
+                    <div className="space-y-2">
+                        <button
+                            onClick={onNewAnalysis}
+                            className="w-full flex items-center gap-2 px-3 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all shadow-lg hover:shadow-emerald-900/20 font-medium text-sm"
+                        >
+                            <Plus className="w-4 h-4" />
+                            New Analysis
+                        </button>
+
+                        {onOpenHistory && (
+                            <button
+                                onClick={onOpenHistory}
+                                className={`w-full flex items-center gap-2 px-3 py-3 rounded-lg transition-all font-medium text-sm ${
+                                    isHistoryActive
+                                        ? 'bg-indigo-600 text-white shadow-lg'
+                                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+                                }`}
+                            >
+                                <FolderOpen className="w-4 h-4" />
+                                History
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* Sync Status Indicator */}
