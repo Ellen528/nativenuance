@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { analyzeText, generatePractice, generateTopicStrategy } from './services/geminiService';
-import { AnalysisResult, SourceType, VocabularyItem, GeneratedPractice, AppMode, SavedVocabularyItem, SavedAnalysis, Note } from './types';
+import { AnalysisResult, SourceType, VocabularyItem, GeneratedPractice, AppMode, SavedAnalysis, Note, AnalysisFolder } from './types';
 import AnalysisView from './components/AnalysisView';
 import PracticeView from './components/PracticeView';
 import HistoryView from './components/HistoryView';
@@ -52,8 +52,8 @@ const AppContent: React.FC = () => {
   const [isGeneratingNext, setIsGeneratingNext] = useState(false);
 
   // History State
-  const [savedItems, setSavedItems] = useState<SavedVocabularyItem[]>([]);
   const [savedAnalyses, setSavedAnalyses] = useState<SavedAnalysis[]>([]);
+  const [analysisFolders, setAnalysisFolders] = useState<AnalysisFolder[]>([]);
   const [isDataLoading, setIsDataLoading] = useState(false);
   const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
 
@@ -63,21 +63,21 @@ const AppContent: React.FC = () => {
 
   // Load data from localStorage
   const loadLocalData = useCallback(() => {
-    const saved = localStorage.getItem('nativeNuance_history');
-    if (saved) {
-      try {
-        setSavedItems(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to parse history", e);
-      }
-    }
-
     const savedAnalysesData = localStorage.getItem('nativeNuance_analysisHistory');
     if (savedAnalysesData) {
       try {
         setSavedAnalyses(JSON.parse(savedAnalysesData));
       } catch (e) {
         console.error("Failed to parse analysis history", e);
+      }
+    }
+
+    const savedFoldersData = localStorage.getItem('nativeNuance_analysisFolders');
+    if (savedFoldersData) {
+      try {
+        setAnalysisFolders(JSON.parse(savedFoldersData));
+      } catch (e) {
+        console.error("Failed to parse folders", e);
       }
     }
   }, []);
@@ -89,33 +89,35 @@ const AppContent: React.FC = () => {
       // Record user visit
       await dataService.recordVisit(userId);
 
-      const [cloudAnalyses, cloudVocabulary] = await Promise.all([
+      const [cloudAnalyses, cloudFolders] = await Promise.all([
         dataService.fetchAnalyses(userId),
-        dataService.fetchVocabulary(userId),
+        dataService.fetchFolders(userId),
       ]);
 
       // Merge with local data (cloud takes precedence)
       const localAnalyses = JSON.parse(localStorage.getItem('nativeNuance_analysisHistory') || '[]');
-      const localVocabulary = JSON.parse(localStorage.getItem('nativeNuance_history') || '[]');
+      const localFolders = JSON.parse(localStorage.getItem('nativeNuance_analysisFolders') || '[]');
 
       // Upload any local-only data to cloud
       if (localAnalyses.length > 0) {
         await dataService.syncAnalyses(userId, localAnalyses);
       }
-      if (localVocabulary.length > 0) {
-        await dataService.syncVocabulary(userId, localVocabulary);
+      if (localFolders.length > 0) {
+        await dataService.syncFolders(userId, localFolders);
       }
 
       // Fetch merged data
-      const mergedAnalyses = await dataService.fetchAnalyses(userId);
-      const mergedVocabulary = await dataService.fetchVocabulary(userId);
+      const [mergedAnalyses, mergedFolders] = await Promise.all([
+        dataService.fetchAnalyses(userId),
+        dataService.fetchFolders(userId),
+      ]);
 
       setSavedAnalyses(mergedAnalyses);
-      setSavedItems(mergedVocabulary);
+      setAnalysisFolders(mergedFolders);
 
       // Update localStorage with merged data
       localStorage.setItem('nativeNuance_analysisHistory', JSON.stringify(mergedAnalyses));
-      localStorage.setItem('nativeNuance_history', JSON.stringify(mergedVocabulary));
+      localStorage.setItem('nativeNuance_analysisFolders', JSON.stringify(mergedFolders));
     } catch (error) {
       console.error('Error loading cloud data:', error);
       // Fall back to local data
@@ -138,66 +140,33 @@ const AppContent: React.FC = () => {
     }
   }, [isAuthenticated, user, authLoading, loadCloudData, loadLocalData]);
 
-  // Save to localStorage helper
-  const saveToLocalStorage = (analyses: SavedAnalysis[], vocabulary: SavedVocabularyItem[]) => {
-    localStorage.setItem('nativeNuance_analysisHistory', JSON.stringify(analyses));
-    localStorage.setItem('nativeNuance_history', JSON.stringify(vocabulary));
-  };
-
-  const saveToHistory = async (itemOrItems: VocabularyItem | VocabularyItem[]) => {
-    const itemsToProcess = Array.isArray(itemOrItems) ? itemOrItems : [itemOrItems];
-
-    const newItems: SavedVocabularyItem[] = [];
-
-    itemsToProcess.forEach(item => {
-      // Check duplicates based on term
-      if (!savedItems.some(s => s.term === item.term)) {
-        newItems.push({
-          ...item,
-          id: crypto.randomUUID(), // Generate proper UUID for Supabase
-          dateAdded: Date.now()
-        });
-      }
-    });
-
-    if (newItems.length > 0) {
-      const newHistory = [...newItems, ...savedItems];
-      setSavedItems(newHistory);
-      localStorage.setItem('nativeNuance_history', JSON.stringify(newHistory));
-
-      // Sync to cloud if authenticated
-      if (isAuthenticated && user) {
-        await dataService.saveVocabularyItems(user.id, newItems);
-      }
-    }
-  };
-
-  const removeFromHistory = async (id: string) => {
-    const newHistory = savedItems.filter(i => i.id !== id);
-    setSavedItems(newHistory);
-    localStorage.setItem('nativeNuance_history', JSON.stringify(newHistory));
-
-    // Sync to cloud if authenticated
-    if (isAuthenticated && user) {
-      await dataService.deleteVocabularyItem(user.id, id);
-    }
-  };
-
   const saveAnalysis = async (notes: Note[] = []) => {
     if (!analysisResult) return;
 
-    // Check if an analysis with the same inputText already exists
-    const existingAnalysis = savedAnalyses.find(a => a.inputText === inputText);
+    // Check if an analysis with the same source already exists
+    // For uploaded files: match by fileName
+    // For pasted text: match by inputText
+    const existingAnalysis = savedAnalyses.find(a => {
+      if (fileName && a.fileName) {
+        // Both have file names - match by file name
+        return a.fileName === fileName;
+      } else if (!fileName && !a.fileName) {
+        // Both are pasted text - match by content
+        return a.inputText === inputText;
+      }
+      return false;
+    });
 
     if (existingAnalysis) {
-      // Update existing analysis
+      // Update existing analysis (overwrite)
       const updatedAnalysis: SavedAnalysis = {
         ...existingAnalysis,
         date: Date.now(),
         sourceType,
+        inputText, // Update with new content
         analysisResult,
         fileName,
-        notes
+        notes: notes.length > 0 ? notes : existingAnalysis.notes // Preserve notes if not provided
       };
 
       const newHistory = savedAnalyses.map(a => 
@@ -259,6 +228,69 @@ const AppContent: React.FC = () => {
     }
   };
 
+  // Folder CRUD functions
+  const createFolder = async (name: string, color?: string) => {
+    const newFolder: AnalysisFolder = {
+      id: crypto.randomUUID(),
+      name,
+      createdAt: Date.now(),
+      color,
+    };
+
+    const newFolders = [...analysisFolders, newFolder];
+    setAnalysisFolders(newFolders);
+    localStorage.setItem('nativeNuance_analysisFolders', JSON.stringify(newFolders));
+
+    if (isAuthenticated && user) {
+      await dataService.createFolder(user.id, newFolder);
+    }
+  };
+
+  const updateFolder = async (folder: AnalysisFolder) => {
+    const newFolders = analysisFolders.map(f => f.id === folder.id ? folder : f);
+    setAnalysisFolders(newFolders);
+    localStorage.setItem('nativeNuance_analysisFolders', JSON.stringify(newFolders));
+
+    if (isAuthenticated && user) {
+      await dataService.updateFolder(user.id, folder);
+    }
+  };
+
+  const deleteFolder = async (folderId: string) => {
+    // Remove folder
+    const newFolders = analysisFolders.filter(f => f.id !== folderId);
+    setAnalysisFolders(newFolders);
+    localStorage.setItem('nativeNuance_analysisFolders', JSON.stringify(newFolders));
+
+    // Move analyses in this folder to uncategorized
+    const newAnalyses = savedAnalyses.map(a => 
+      a.folderId === folderId ? { ...a, folderId: null } : a
+    );
+    setSavedAnalyses(newAnalyses);
+    localStorage.setItem('nativeNuance_analysisHistory', JSON.stringify(newAnalyses));
+
+    if (isAuthenticated && user) {
+      await dataService.deleteFolder(user.id, folderId);
+      // Update all analyses that were in this folder
+      const analysesToUpdate = savedAnalyses.filter(a => a.folderId === folderId);
+      for (const analysis of analysesToUpdate) {
+        await dataService.updateAnalysisFolder(user.id, analysis.id, null);
+      }
+    }
+  };
+
+  const moveAnalysisToFolder = async (analysisId: string, folderId: string | null) => {
+    const newAnalyses = savedAnalyses.map(a => 
+      a.id === analysisId ? { ...a, folderId } : a
+    );
+    setSavedAnalyses(newAnalyses);
+    localStorage.setItem('nativeNuance_analysisHistory', JSON.stringify(newAnalyses));
+
+    if (isAuthenticated && user) {
+      await dataService.updateAnalysisFolder(user.id, analysisId, folderId);
+    }
+  };
+
   const handleNewAnalysis = () => {
     setAnalysisResult(null);
     setInputText('');
@@ -269,7 +301,7 @@ const AppContent: React.FC = () => {
   };
 
   const handleExportData = () => {
-    dataService.exportToJson(savedAnalyses, savedItems);
+    dataService.exportToJson(savedAnalyses, []);
   };
 
   const processFile = (file: File | undefined) => {
@@ -462,6 +494,8 @@ const AppContent: React.FC = () => {
         isOpen={isSidebarOpen}
         toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         onExportData={handleExportData}
+        onOpenHistory={() => setMode(AppMode.HISTORY)}
+        isHistoryActive={mode === AppMode.HISTORY}
       />
 
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
@@ -480,11 +514,14 @@ const AppContent: React.FC = () => {
 
             {mode === AppMode.HISTORY && (
               <HistoryView
-                items={savedItems}
-                onRemove={removeFromHistory}
                 savedAnalyses={savedAnalyses}
                 onLoadAnalysis={loadAnalysis}
                 onRemoveAnalysis={removeAnalysis}
+                folders={analysisFolders}
+                onCreateFolder={createFolder}
+                onUpdateFolder={updateFolder}
+                onDeleteFolder={deleteFolder}
+                onMoveAnalysisToFolder={moveAnalysisToFolder}
               />
             )}
 
@@ -671,8 +708,6 @@ const AppContent: React.FC = () => {
                       <AnalysisView
                         data={analysisResult}
                         onGeneratePractice={handleGeneratePractice}
-                        onSaveVocab={saveToHistory}
-                        savedTermIds={new Set(savedItems.map(i => i.term))}
                         onSaveAnalysis={saveAnalysis}
                         initialNotes={currentAnalysisId ? savedAnalyses.find(a => a.id === currentAnalysisId)?.notes || [] : []}
                       />

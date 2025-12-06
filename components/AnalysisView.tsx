@@ -1,18 +1,14 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AnalysisResult, VocabularyItem, VocabularyCategory, Note } from '../types';
-import { CheckCircle, BookOpen, Layout, Zap, Volume2, Quote, MessageCircle, Sparkles, ArrowRightCircle, AlignLeft, ChevronDown, ChevronUp, Grid, Smartphone, Copy, Check, Save, ChevronLeft, ChevronRight, RotateCw, Download, FileText, Image } from 'lucide-react';
+import { CheckCircle, BookOpen, Layout, Zap, Volume2, Quote, MessageCircle, Sparkles, ArrowRightCircle, AlignLeft, ChevronDown, ChevronUp, Grid, Smartphone, Check, Save, ChevronLeft, ChevronRight, RotateCw, X, XCircle, GraduationCap } from 'lucide-react';
 import { generateSpeech } from '../services/geminiService';
 import WordLookupPopup from './WordLookupPopup';
 import NotesSidebar from './NotesSidebar';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
 
 interface Props {
   data: AnalysisResult;
   onGeneratePractice: (selected: VocabularyItem[]) => void;
-  onSaveVocab: (item: VocabularyItem | VocabularyItem[]) => void;
-  savedTermIds: Set<string>;
   onSaveAnalysis: (notes: Note[]) => void;
   initialNotes?: Note[];
 }
@@ -45,15 +41,12 @@ const CATEGORY_CONFIG: Record<VocabularyCategory, { label: string; color: string
   }
 };
 
-const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, savedTermIds, onSaveAnalysis, initialNotes = [] }) => {
+const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveAnalysis, initialNotes = [] }) => {
   const [selectedTerms, setSelectedTerms] = useState<Set<string>>(new Set());
   const [playingText, setPlayingText] = useState<string | null>(null);
   const [isTocOpen, setIsTocOpen] = useState(true);
   const [viewMode, setViewMode] = useState<'list' | 'flashcard'>('list');
-  const [copied, setCopied] = useState(false);
   const [savedAnalysis, setSavedAnalysis] = useState(false);
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
 
   // Word Lookup State
   const [lookupState, setLookupState] = useState<{ word: string; context: string; position: { x: number; y: number } } | null>(null);
@@ -66,27 +59,42 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
   // Track flipped state per category
   const [flippedState, setFlippedState] = useState<Record<string, boolean>>({});
 
-  // Ref for the content to export
-  const exportContentRef = useRef<HTMLDivElement>(null);
+  // Fullscreen flashcard practice mode
+  const [isFlashcardMode, setIsFlashcardMode] = useState(false);
+  const [flashcardIndex, setFlashcardIndex] = useState(0);
+  const [userAnswer, setUserAnswer] = useState('');
+  const [answerResult, setAnswerResult] = useState<'correct' | 'incorrect' | null>(null);
+  const [showAnswer, setShowAnswer] = useState(false);
+  const flashcardInputRef = useRef<HTMLInputElement>(null);
+
+  // Helper function to mask the vocabulary term in text
+  const maskTerm = useCallback((text: string, term: string): string => {
+    if (!text || !term) return text;
+    
+    let maskedText = text;
+    const cleanTerm = term.replace(/[.,!?;:'"]+$/, '').trim();
+    const subPhrases = cleanTerm.split(/[,;]|\s+and\s+/i)
+      .map(s => s.trim())
+      .filter(s => s.length > 2);
+    
+    const allTermsToMask = [cleanTerm, ...subPhrases];
+    const uniqueTerms = [...new Set(allTermsToMask)];
+    uniqueTerms.sort((a, b) => b.length - a.length);
+    
+    for (const phrase of uniqueTerms) {
+      if (phrase.length < 3) continue;
+      const escapedTerm = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escapedTerm}\\b`, 'gi');
+      maskedText = maskedText.replace(regex, '_____');
+    }
+    
+    return maskedText;
+  }, []);
 
   // Reset notes when loading a different analysis
   useEffect(() => {
     setNotes(initialNotes);
   }, [initialNotes]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (showExportMenu) {
-        const target = event.target as HTMLElement;
-        if (!target.closest('.export-menu-container')) {
-          setShowExportMenu(false);
-        }
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showExportMenu]);
 
   useEffect(() => {
     const handleSelection = () => {
@@ -187,35 +195,68 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
     }
   };
 
-  const handleSave = (e: React.MouseEvent, item: VocabularyItem) => {
-    e.stopPropagation();
-    onSaveVocab(item);
-  };
-
-  const handleSaveAll = () => {
-    onSaveVocab(data.vocabulary);
-  };
-
   const handleSaveAnalysisClick = () => {
     onSaveAnalysis(notes);
     setSavedAnalysis(true);
     setTimeout(() => setSavedAnalysis(false), 2000);
   };
 
-  const handleCopyAnalysis = () => {
-    let report = `# ${data.tone.toUpperCase()}\n${data.summary}\n\n`;
+  // Fullscreen flashcard functions
+  const openFlashcardMode = () => {
+    setIsFlashcardMode(true);
+    setFlashcardIndex(0);
+    setUserAnswer('');
+    setAnswerResult(null);
+    setShowAnswer(false);
+  };
 
-    data.vocabulary.forEach(item => {
-      report += `## ${item.term} (${CATEGORY_CONFIG[item.category].label})\n`;
-      report += `**Definition:** ${item.definition}\n`;
-      if (item.source_context) report += `**Context:** "${item.source_context}"\n`;
-      if (item.imagery_etymology) report += `**Nuance:** ${item.imagery_etymology}\n`;
-      report += `\n`;
-    });
+  const closeFlashcardMode = () => {
+    setIsFlashcardMode(false);
+    setUserAnswer('');
+    setAnswerResult(null);
+    setShowAnswer(false);
+  };
 
-    navigator.clipboard.writeText(report);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleFlashcardNext = () => {
+    if (flashcardIndex < data.vocabulary.length - 1) {
+      setFlashcardIndex(prev => prev + 1);
+      setUserAnswer('');
+      setAnswerResult(null);
+      setShowAnswer(false);
+    }
+  };
+
+  const handleFlashcardPrev = () => {
+    if (flashcardIndex > 0) {
+      setFlashcardIndex(prev => prev - 1);
+      setUserAnswer('');
+      setAnswerResult(null);
+      setShowAnswer(false);
+    }
+  };
+
+  const handleCheckFlashcardAnswer = async () => {
+    if (!userAnswer.trim()) return;
+    const currentItem = data.vocabulary[flashcardIndex];
+    const isCorrect = userAnswer.trim().toLowerCase() === currentItem.term.toLowerCase();
+    setAnswerResult(isCorrect ? 'correct' : 'incorrect');
+    setShowAnswer(true);
+    try {
+      await generateSpeech(currentItem.term);
+    } catch (error) {
+      console.error('Failed to pronounce:', error);
+    }
+  };
+
+  const handleSkipFlashcard = async () => {
+    setAnswerResult('incorrect');
+    setShowAnswer(true);
+    const currentItem = data.vocabulary[flashcardIndex];
+    try {
+      await generateSpeech(currentItem.term);
+    } catch (error) {
+      console.error('Failed to pronounce:', error);
+    }
   };
 
   const scrollToSection = (id: string) => {
@@ -246,96 +287,6 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
     setFlippedState(prev => ({ ...prev, [cat]: !prev[cat] }));
   };
 
-  const handleExportPNG = async () => {
-    if (!exportContentRef.current) return;
-
-    setIsExporting(true);
-    setShowExportMenu(false);
-
-    try {
-      // Temporarily switch to list view for export
-      const originalViewMode = viewMode;
-      if (viewMode === 'flashcard') {
-        setViewMode('list');
-        // Wait for re-render
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-
-      const canvas = await html2canvas(exportContentRef.current, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#f8fafc'
-      });
-
-      // Convert canvas to blob and download
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.download = `nativenuance-analysis-${Date.now()}.png`;
-          link.href = url;
-          link.click();
-          URL.revokeObjectURL(url);
-        }
-      });
-
-      // Restore original view mode
-      if (originalViewMode === 'flashcard') {
-        setViewMode('flashcard');
-      }
-    } catch (error) {
-      console.error('Export failed:', error);
-      alert('Failed to export. Please try again.');
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handleExportPDF = async () => {
-    if (!exportContentRef.current) return;
-
-    setIsExporting(true);
-    setShowExportMenu(false);
-
-    try {
-      // Temporarily switch to list view for export
-      const originalViewMode = viewMode;
-      if (viewMode === 'flashcard') {
-        setViewMode('list');
-        // Wait for re-render
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-
-      const canvas = await html2canvas(exportContentRef.current, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#f8fafc'
-      });
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
-        unit: 'px',
-        format: [canvas.width, canvas.height]
-      });
-
-      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-      pdf.save(`nativenuance-analysis-${Date.now()}.pdf`);
-
-      // Restore original view mode
-      if (originalViewMode === 'flashcard') {
-        setViewMode('flashcard');
-      }
-    } catch (error) {
-      console.error('Export failed:', error);
-      alert('Failed to export. Please try again.');
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
   // Group vocabulary by category
   const groupedVocab: Partial<Record<VocabularyCategory, VocabularyItem[]>> = {};
   data.vocabulary.forEach(item => {
@@ -362,7 +313,7 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
           onAddNote={addNote}
         />
       )}
-      <div ref={exportContentRef}>
+      <div>
         {/* Top Bar: Summary + Actions */}
         <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 z-10">
           <div className="flex flex-col gap-6">
@@ -407,60 +358,21 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
               </div>
 
               {/* Action Buttons */}
-              <div className="flex gap-2 w-full sm:w-auto">
+              <div className="flex gap-2">
                 <button
-                  onClick={handleCopyAnalysis}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 hover:text-indigo-600 transition-colors"
+                  onClick={openFlashcardMode}
+                  disabled={data.vocabulary.length === 0}
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm disabled:bg-slate-300 disabled:cursor-not-allowed"
                 >
-                  {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-                  {copied ? 'Copied!' : 'Copy Analysis'}
+                  <GraduationCap className="w-4 h-4" />
+                  Practice Flashcards
                 </button>
-
-                {/* Export Button with Dropdown */}
-                <div className="relative export-menu-container">
-                  <button
-                    onClick={() => setShowExportMenu(!showExportMenu)}
-                    disabled={isExporting}
-                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Download className="w-4 h-4" />
-                    {isExporting ? 'Exporting...' : 'Export'}
-                  </button>
-
-                  {showExportMenu && !isExporting && (
-                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-slate-200 py-1 z-50 animate-fade-in">
-                      <button
-                        onClick={handleExportPDF}
-                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                      >
-                        <FileText className="w-4 h-4" />
-                        Export as PDF
-                      </button>
-                      <button
-                        onClick={handleExportPNG}
-                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                      >
-                        <Image className="w-4 h-4" />
-                        Export as PNG
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  onClick={handleSaveAll}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm"
-                >
-                  <Save className="w-4 h-4" />
-                  Save All
-                </button>
-
                 <button
                   onClick={handleSaveAnalysisClick}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition-colors shadow-sm"
                 >
                   {savedAnalysis ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-                  {savedAnalysis ? 'Saved!' : 'Save Analysis'}
+                  {savedAnalysis ? 'Saved!' : 'Save'}
                 </button>
               </div>
             </div>
@@ -572,7 +484,6 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
                     <div className="space-y-6">
                       {items.map((item, idx) => {
                         const isSelected = selectedTerms.has(item.term);
-                        const isSaved = savedTermIds.has(item.term);
 
                         return (
                           <div
@@ -594,19 +505,8 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
                                     <Volume2 className="w-5 h-5" />
                                   </button>
                                 </div>
-                                <div className="flex gap-2">
-                                  <button
-                                    onClick={(e) => handleSave(e, item)}
-                                    className={`p-2 rounded-full hover:bg-slate-100 transition-colors z-10 ${isSaved ? 'text-yellow-500 fill-yellow-500' : 'text-slate-300 hover:text-yellow-500'}`}
-                                    title="Save to Vocabulary"
-                                  >
-                                    <div className={isSaved ? "fill-current" : ""}>
-                                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" /></svg>
-                                    </div>
-                                  </button>
-                                  <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 text-transparent'}`}>
-                                    <CheckCircle className="w-4 h-4" />
-                                  </div>
+                                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 text-transparent'}`}>
+                                  <CheckCircle className="w-4 h-4" />
                                 </div>
                               </div>
                               <p className="text-slate-600 text-lg mb-4">{item.definition}</p>
@@ -670,7 +570,6 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
                         const currentIndex = categoryIndices[catKey] || 0;
                         const isFlipped = flippedState[catKey] || false;
                         const currentItem = items[currentIndex];
-                        const isSaved = savedTermIds.has(currentItem.term);
 
                         return (
                           <div className="flex flex-col items-center">
@@ -682,15 +581,6 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
                               <div className={`relative w-full h-full transition-transform duration-500 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}>
                                 {/* Front */}
                                 <div className="absolute inset-0 backface-hidden bg-white rounded-2xl shadow-lg border border-slate-200 flex flex-col items-center justify-center p-8 hover:shadow-xl transition-shadow">
-                                  <div className="absolute top-4 right-4">
-                                    <button
-                                      onClick={(e) => handleSave(e, currentItem)}
-                                      className={`p-2 rounded-full hover:bg-slate-50 z-20 ${isSaved ? 'text-yellow-500 fill-yellow-500' : 'text-slate-300 hover:text-yellow-500'}`}
-                                    >
-                                      <Save className={`w-5 h-5 ${isSaved ? 'fill-current' : ''}`} />
-                                    </button>
-                                  </div>
-
                                   <div className={`mb-6 p-4 rounded-full transform scale-110 ${config.color.split(' ')[1]} ${config.color.split(' ')[0]}`}>
                                     {config.icon}
                                   </div>
@@ -768,6 +658,177 @@ const AnalysisView: React.FC<Props> = ({ data, onGeneratePractice, onSaveVocab, 
           </div>
         </div>
       </div>
+
+      {/* Fullscreen Flashcard Practice Modal */}
+      {isFlashcardMode && data.vocabulary.length > 0 && (
+        <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4">
+          {/* Close Button */}
+          <button
+            onClick={closeFlashcardMode}
+            className="absolute top-6 right-6 p-3 text-slate-400 hover:text-white hover:bg-slate-800 rounded-full transition-colors"
+          >
+            <X className="w-6 h-6" />
+          </button>
+
+          {/* Progress */}
+          <div className="absolute top-6 left-6 text-slate-400 text-sm font-medium">
+            {flashcardIndex + 1} / {data.vocabulary.length}
+          </div>
+
+          {/* Card */}
+          <div className="w-full max-w-xl">
+            {(() => {
+              const currentItem = data.vocabulary[flashcardIndex];
+              const example = currentItem.examples && currentItem.examples.length > 0 
+                ? currentItem.examples[0].sentence 
+                : null;
+
+              return (
+                <div className="bg-white rounded-2xl shadow-2xl p-6 min-h-[400px] flex flex-col">
+                  {/* Category Badge */}
+                  <div className="flex justify-center mb-4">
+                    <span className="px-3 py-1 text-xs font-bold uppercase tracking-wider bg-indigo-100 text-indigo-700 rounded-full">
+                      {currentItem.category.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+
+                  {/* Definition Card */}
+                  <div className="p-5 bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl mb-5">
+                    <p className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3">Definition</p>
+                    <p className="text-xl text-white font-serif leading-relaxed">
+                      {maskTerm(currentItem.definition, currentItem.term)}
+                    </p>
+                  </div>
+
+                  {/* Example Hint */}
+                  {example && (
+                    <div className="mb-5 p-4 bg-amber-50 rounded-xl border border-amber-200">
+                      <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-2">💡 Hint (Example)</p>
+                      <p className="text-slate-700 italic text-sm leading-relaxed">"{maskTerm(example, currentItem.term)}"</p>
+                    </div>
+                  )}
+
+                  {/* Answer Section */}
+                  <div className="flex-1 flex flex-col justify-end">
+                    {!showAnswer ? (
+                      <div className="space-y-4">
+                        <div>
+                          <p className="text-xs font-bold text-slate-400 uppercase mb-2">What's the term?</p>
+                          <div className="flex gap-2">
+                            <input
+                              ref={flashcardInputRef}
+                              type="text"
+                              value={userAnswer}
+                              onChange={(e) => setUserAnswer(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && handleCheckFlashcardAnswer()}
+                              placeholder="Type your answer..."
+                              className="flex-1 px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-lg font-serif"
+                              autoFocus
+                            />
+                            <button
+                              onClick={handleCheckFlashcardAnswer}
+                              disabled={!userAnswer.trim()}
+                              className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                              <Check className="w-5 h-5" />
+                              Check
+                            </button>
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleSkipFlashcard}
+                          className="w-full py-2 text-slate-400 hover:text-slate-600 text-sm font-medium transition-colors"
+                        >
+                          Skip & Show Answer
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {/* Result */}
+                        <div className={`p-4 rounded-xl flex items-center gap-3 ${
+                          answerResult === 'correct' 
+                            ? 'bg-emerald-50 border border-emerald-200' 
+                            : 'bg-red-50 border border-red-200'
+                        }`}>
+                          {answerResult === 'correct' ? (
+                            <CheckCircle className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+                          ) : (
+                            <XCircle className="w-6 h-6 text-red-500 flex-shrink-0" />
+                          )}
+                          <div className="flex-1">
+                            <p className={`font-bold ${answerResult === 'correct' ? 'text-emerald-700' : 'text-red-700'}`}>
+                              {answerResult === 'correct' ? 'Correct!' : 'Not quite...'}
+                            </p>
+                            {answerResult === 'incorrect' && userAnswer && (
+                              <p className="text-sm text-red-600">Your answer: "{userAnswer}"</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Correct Answer */}
+                        <div className="p-4 bg-slate-900 rounded-xl">
+                          <p className="text-xs font-bold text-slate-400 uppercase mb-2">Answer</p>
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-2xl font-serif font-bold text-white">
+                              {currentItem.term}
+                            </h3>
+                            <button
+                              onClick={(e) => handlePlayAudio(e, currentItem.term)}
+                              className={`p-3 rounded-full bg-slate-800 hover:bg-slate-700 transition-colors ${
+                                playingText === currentItem.term ? 'text-emerald-400 animate-pulse' : 'text-slate-400'
+                              }`}
+                            >
+                              <Volume2 className="w-5 h-5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Next Button */}
+                        {flashcardIndex < data.vocabulary.length - 1 ? (
+                          <button
+                            onClick={handleFlashcardNext}
+                            className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
+                          >
+                            Next Card <ChevronRight className="w-5 h-5" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={closeFlashcardMode}
+                            className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
+                          >
+                            Complete! <Check className="w-5 h-5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Navigation */}
+          <div className="flex items-center gap-8 mt-8">
+            <button
+              onClick={handleFlashcardPrev}
+              disabled={flashcardIndex === 0}
+              className="p-3 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </button>
+            <span className="text-sm font-medium text-slate-400">
+              {flashcardIndex + 1} / {data.vocabulary.length}
+            </span>
+            <button
+              onClick={handleFlashcardNext}
+              disabled={flashcardIndex >= data.vocabulary.length - 1}
+              className="p-3 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              <ChevronRight className="w-6 h-6" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

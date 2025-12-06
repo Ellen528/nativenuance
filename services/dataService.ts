@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient';
-import { SavedAnalysis, SavedVocabularyItem, SourceType, Note } from '../types';
+import { SavedAnalysis, SavedVocabularyItem, SourceType, Note, AnalysisFolder } from '../types';
 
 // Database row types (matching Supabase schema)
 interface DbSavedAnalysis {
@@ -11,6 +11,7 @@ interface DbSavedAnalysis {
   analysis_result: object;
   file_name: string | null;
   notes: object | null;
+  folder_id: string | null;
   created_at: string;
 }
 
@@ -34,6 +35,14 @@ interface DbSavedVocabulary {
   created_at: string;
 }
 
+interface DbAnalysisFolder {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string | null;
+  created_at: string;
+}
+
 // Transform database row to app type
 const dbToAnalysis = (row: DbSavedAnalysis): SavedAnalysis => ({
   id: row.id,
@@ -43,6 +52,14 @@ const dbToAnalysis = (row: DbSavedAnalysis): SavedAnalysis => ({
   analysisResult: row.analysis_result as SavedAnalysis['analysisResult'],
   fileName: row.file_name,
   notes: (row.notes as Note[]) || [],
+  folderId: row.folder_id || null,
+});
+
+const dbToFolder = (row: DbAnalysisFolder): AnalysisFolder => ({
+  id: row.id,
+  name: row.name,
+  createdAt: new Date(row.created_at).getTime(),
+  color: row.color || undefined,
 });
 
 const dbToVocabulary = (row: DbSavedVocabulary): SavedVocabularyItem => ({
@@ -102,6 +119,7 @@ export const dataService = {
         analysis_result: analysis.analysisResult,
         file_name: analysis.fileName || null,
         notes: analysis.notes || [],
+        folder_id: analysis.folderId || null,
       })
       .select()
       .single();
@@ -135,6 +153,7 @@ export const dataService = {
         analysis_result: analysis.analysisResult,
         file_name: analysis.fileName || null,
         notes: analysis.notes || [],
+        folder_id: analysis.folderId || null,
       })
       .eq('id', analysis.id)
       .eq('user_id', userId)
@@ -199,6 +218,7 @@ export const dataService = {
         input_text: analysis.inputText,
         analysis_result: analysis.analysisResult,
         file_name: analysis.fileName || null,
+        folder_id: analysis.folderId || null,
       })));
 
     if (error) {
@@ -294,6 +314,151 @@ export const dataService = {
     if (newItems.length === 0) return;
 
     await this.saveVocabularyItems(userId, newItems);
+  },
+
+  // ==================== FOLDERS ====================
+
+  /**
+   * Fetch all folders for the current user
+   */
+  async fetchFolders(userId: string): Promise<AnalysisFolder[]> {
+    if (!supabase) return [];
+
+    const { data, error } = await supabase
+      .from('analysis_folders')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching folders:', error);
+      return [];
+    }
+
+    return (data || []).map(dbToFolder);
+  },
+
+  /**
+   * Create a new folder
+   */
+  async createFolder(userId: string, folder: AnalysisFolder): Promise<AnalysisFolder | null> {
+    if (!supabase) {
+      console.warn('Supabase not configured, skipping cloud save');
+      return null;
+    }
+
+    const { data, error } = await supabase
+      .from('analysis_folders')
+      .insert({
+        id: folder.id,
+        user_id: userId,
+        name: folder.name,
+        color: folder.color || null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating folder:', error);
+      return null;
+    }
+
+    return dbToFolder(data);
+  },
+
+  /**
+   * Update a folder
+   */
+  async updateFolder(userId: string, folder: AnalysisFolder): Promise<AnalysisFolder | null> {
+    if (!supabase) return null;
+
+    const { data, error } = await supabase
+      .from('analysis_folders')
+      .update({
+        name: folder.name,
+        color: folder.color || null,
+      })
+      .eq('id', folder.id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating folder:', error);
+      return null;
+    }
+
+    return dbToFolder(data);
+  },
+
+  /**
+   * Delete a folder
+   */
+  async deleteFolder(userId: string, folderId: string): Promise<boolean> {
+    if (!supabase) return false;
+
+    const { error } = await supabase
+      .from('analysis_folders')
+      .delete()
+      .eq('id', folderId)
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Error deleting folder:', error);
+      return false;
+    }
+
+    return true;
+  },
+
+  /**
+   * Update analysis folder assignment
+   */
+  async updateAnalysisFolder(userId: string, analysisId: string, folderId: string | null): Promise<boolean> {
+    if (!supabase) return false;
+
+    const { error } = await supabase
+      .from('saved_analyses')
+      .update({ folder_id: folderId })
+      .eq('id', analysisId)
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Error updating analysis folder:', error);
+      return false;
+    }
+
+    return true;
+  },
+
+  /**
+   * Sync folders (used when user logs in)
+   */
+  async syncFolders(userId: string, folders: AnalysisFolder[]): Promise<void> {
+    if (!supabase || folders.length === 0) return;
+
+    const { data: existing } = await supabase
+      .from('analysis_folders')
+      .select('id')
+      .eq('user_id', userId);
+
+    const existingIds = new Set((existing || []).map(e => e.id));
+    const newFolders = folders.filter(f => !existingIds.has(f.id));
+
+    if (newFolders.length === 0) return;
+
+    const { error } = await supabase
+      .from('analysis_folders')
+      .insert(newFolders.map(folder => ({
+        id: folder.id,
+        user_id: userId,
+        name: folder.name,
+        color: folder.color || null,
+      })));
+
+    if (error) {
+      console.error('Error syncing folders:', error);
+    }
   },
 
   // ==================== EXPORT ====================
