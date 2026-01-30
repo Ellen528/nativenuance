@@ -179,6 +179,9 @@ const AnalysisView: React.FC<Props> = ({
   const [correctCount, setCorrectCount] = useState(0);
   const [incorrectCount, setIncorrectCount] = useState(0);
   const [showResults, setShowResults] = useState(false);
+  
+  // Track if the test was passed in this session (used to sync when analysisId becomes available)
+  const [sessionPassed, setSessionPassed] = useState(false);
 
   // Helper function to mask the vocabulary term in text
   const maskTerm = useCallback((text: string, term: string): string => {
@@ -209,19 +212,27 @@ const AnalysisView: React.FC<Props> = ({
     setNotes(initialNotes);
   }, [initialNotes]);
 
-  // Check and update passed status when results are shown
+  // Check and mark session as passed when results are shown with 90%+ score
   useEffect(() => {
-    if (showResults && analysisId && onUpdateFlashcardPassed) {
+    if (showResults) {
       const totalCards = data.vocabulary.length;
       const totalAnswered = correctCount + incorrectCount;
       const percentage = totalAnswered > 0 ? (correctCount / totalAnswered) * 100 : 0;
       
-      // Update passed status if 90%+ and completed all cards
-      if (percentage >= 90 && totalAnswered === totalCards && !flashcardPassed) {
-        onUpdateFlashcardPassed(analysisId, true);
+      // Mark session as passed if 90%+ and completed all cards
+      if (percentage >= 90 && totalAnswered === totalCards) {
+        setSessionPassed(true);
       }
     }
-  }, [showResults, correctCount, incorrectCount, data.vocabulary.length, analysisId, flashcardPassed, onUpdateFlashcardPassed]);
+  }, [showResults, correctCount, incorrectCount, data.vocabulary.length]);
+
+  // Sync sessionPassed to parent when analysisId becomes available (after saving)
+  // This handles the case where user passes the test before saving the analysis
+  useEffect(() => {
+    if (sessionPassed && analysisId && onUpdateFlashcardPassed && !flashcardPassed) {
+      onUpdateFlashcardPassed(analysisId, true);
+    }
+  }, [sessionPassed, analysisId, flashcardPassed, onUpdateFlashcardPassed]);
 
   // Keyboard shortcut: Space to go to next card when answer is showing
   useEffect(() => {
@@ -357,6 +368,7 @@ const AnalysisView: React.FC<Props> = ({
     setCorrectCount(0);
     setIncorrectCount(0);
     setShowResults(false);
+    setSessionPassed(false); // Reset session passed state for new practice
   };
 
   const closeFlashcardMode = () => {
@@ -377,6 +389,7 @@ const AnalysisView: React.FC<Props> = ({
     setCorrectCount(0);
     setIncorrectCount(0);
     setShowResults(false);
+    setSessionPassed(false); // Reset session passed state for retry
   };
 
   const handleFlashcardNext = () => {

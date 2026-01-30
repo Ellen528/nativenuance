@@ -242,8 +242,9 @@ const AppContent: React.FC = () => {
       }
     } else {
       // Create new analysis
+      const newAnalysisId = crypto.randomUUID();
       const newAnalysis: SavedAnalysis = {
-        id: crypto.randomUUID(),
+        id: newAnalysisId,
         date: Date.now(),
         sourceType,
         inputText,
@@ -255,6 +256,9 @@ const AppContent: React.FC = () => {
       const newHistory = [newAnalysis, ...savedAnalyses];
       setSavedAnalyses(newHistory);
       localStorage.setItem('wordDecode_analysisHistory', JSON.stringify(newHistory));
+      
+      // Set the current analysis ID so flashcard progress can be tracked
+      setCurrentAnalysisId(newAnalysisId);
 
       // Sync to cloud if authenticated
       if (isAuthenticated && user) {
