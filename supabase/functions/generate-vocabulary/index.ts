@@ -43,22 +43,28 @@ ${termsFormatted}
 
 For EACH term, provide:
 1. A clear, simple definition (10-20 words)
-2. A natural example sentence showing the term in context
+2. THREE natural example sentences showing the term in DIFFERENT contexts:
+   - Example 1 (label: "Casual"): How friends or family would use it in conversation
+   - Example 2 (label: "Workplace"): How colleagues would use it in a professional setting
+   - Example 3 (label: "General"): A third distinct real-world scenario
 
 OUTPUT FORMAT (JSON array):
 [
   {
     "term": "pack into",
     "definition": "to fit many people or things into a small space",
-    "example": "Hundreds of fans packed into the stadium to watch the final match."
+    "examples": [
+      { "label": "Casual", "sentence": "We all packed into my tiny apartment for the game night." },
+      { "label": "Workplace", "sentence": "The team packed into the small meeting room for the urgent briefing." },
+      { "label": "General", "sentence": "Hundreds of fans packed into the stadium to watch the final match." }
+    ]
   }
 ]
 
 RULES:
 - Keep definitions simple and clear
-- Example sentences should be natural and show the term's meaning
-- Use everyday contexts for examples
-- For phrasal verbs, show the term conjugated naturally in the example
+- Each example sentence must show the term used naturally in a clearly different context
+- For phrasal verbs, show the term conjugated naturally in each example
 
 Return ONLY valid JSON array, no markdown.`;
 
@@ -96,7 +102,7 @@ Return ONLY valid JSON array, no markdown.`;
     }
 
     // Parse the JSON response
-    let rawItems: Array<{term: string; definition: string; example: string}>;
+    let rawItems: Array<{term: string; definition: string; examples: Array<{label: string; sentence: string}>}>;
     try {
       const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       rawItems = JSON.parse(jsonStr);
@@ -110,13 +116,15 @@ Return ONLY valid JSON array, no markdown.`;
       term: item.term,
       definition: item.definition,
       category: category || "phrasal_verbs",
-      source_context: item.example,
+      source_context: item.examples?.[0]?.sentence,
       difficulty_level: "intermediate",
-      examples: [{
-        sentence: item.example,
-        context_label: "AI generated",
-        explanation: ""
-      }]
+      examples: Array.isArray(item.examples)
+        ? item.examples.map((ex) => ({
+            sentence: ex.sentence,
+            context_label: ex.label || "Example",
+            explanation: "",
+          }))
+        : [],
     }));
 
     console.log(`Generated ${vocabulary.length} vocabulary items`);

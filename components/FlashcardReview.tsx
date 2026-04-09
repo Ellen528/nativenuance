@@ -76,6 +76,10 @@ const FlashcardReview: React.FC<Props> = ({ userId, savedAnalyses, hasBooks = fa
   // Audio state
   const [playingId, setPlayingId] = useState<string | null>(null);
 
+  // Re-queue tracking: how many times each card has been re-queued this session
+  const requeueCountRef = useRef<Record<string, number>>({});
+  const [requeuedMessage, setRequeuedMessage] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Load stats on mount and when study source changes
@@ -321,6 +325,7 @@ const FlashcardReview: React.FC<Props> = ({ userId, savedAnalyses, hasBooks = fa
       return;
     }
     
+    requeueCountRef.current = {};
     setReviewQueue(cards);
     setCurrentIndex(0);
     setUserAnswer('');
@@ -358,12 +363,25 @@ const FlashcardReview: React.FC<Props> = ({ userId, savedAnalyses, hasBooks = fa
 
   const handleQualitySelect = async (quality: SimpleQuality) => {
     const currentCard = reviewQueue[currentIndex];
-    
+
     // Update the review in the database
     await dataService.updateReviewAfterAnswer(userId, currentCard.id, quality);
-    
+
+    // Re-queue "again" cards so the user sees them again this session (max 2x per card)
+    let newQueue = reviewQueue;
+    if (quality === 'again') {
+      const count = requeueCountRef.current[currentCard.id] || 0;
+      if (count < 2) {
+        requeueCountRef.current[currentCard.id] = count + 1;
+        newQueue = [...reviewQueue, currentCard];
+        setReviewQueue(newQueue);
+        setRequeuedMessage(true);
+        setTimeout(() => setRequeuedMessage(false), 2000);
+      }
+    }
+
     // Move to next card or show results
-    if (currentIndex < reviewQueue.length - 1) {
+    if (currentIndex < newQueue.length - 1) {
       setCurrentIndex(prev => prev + 1);
       setUserAnswer('');
       setShowAnswer(false);
@@ -827,6 +845,13 @@ const FlashcardReview: React.FC<Props> = ({ userId, savedAnalyses, hasBooks = fa
         </span>
       </div>
 
+      {/* Re-queue notification */}
+      {requeuedMessage && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 px-4 py-1.5 bg-amber-500/90 text-white text-xs font-medium rounded-full whitespace-nowrap">
+          You'll see this again shortly
+        </div>
+      )}
+
       {/* Card */}
       <div className="w-full max-w-xl">
         <div className="bg-white rounded-2xl shadow-2xl p-6 min-h-[400px] flex flex-col">
@@ -915,6 +940,23 @@ const FlashcardReview: React.FC<Props> = ({ userId, savedAnalyses, hasBooks = fa
                     <Volume2 className="w-5 h-5" />
                   </button>
                 </div>
+
+                {/* All Examples */}
+                {currentCard.examples && currentCard.examples.length > 0 && (
+                  <div className="space-y-2 text-left">
+                    {currentCard.examples.map((ex, i) => (
+                      <div key={i} className="p-3 bg-slate-50 rounded-lg">
+                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                          {ex.context_label}
+                        </span>
+                        <p className="text-sm text-slate-600 italic mt-1">"{ex.sentence}"</p>
+                        {ex.explanation && (
+                          <p className="text-xs text-slate-400 mt-1">{ex.explanation}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Quality Buttons */}
                 <div className="space-y-2">

@@ -118,7 +118,7 @@ const BookLibrary: React.FC<BookLibraryProps> = ({ userId, onSelectBook, onUploa
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {books.map((book) => {
             const progress = getProgressPercentage(book);
             
@@ -129,8 +129,8 @@ const BookLibrary: React.FC<BookLibraryProps> = ({ userId, onSelectBook, onUploa
                 className="group bg-white rounded-xl border border-slate-200 overflow-hidden hover:shadow-lg hover:border-emerald-300 transition-all cursor-pointer"
               >
                 {/* Book Cover Placeholder */}
-                <div className="h-40 bg-gradient-to-br from-emerald-500 to-blue-600 flex items-center justify-center relative">
-                  <BookOpen className="w-16 h-16 text-white/30" />
+                <div className="h-24 bg-gradient-to-br from-emerald-500 to-blue-600 flex items-center justify-center relative">
+                  <BookOpen className="w-10 h-10 text-white/30" />
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
                   
                   {/* Delete button */}

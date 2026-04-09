@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep:*)",
+      "Bash(git -C /mnt/c/Users/eyan/Downloads/WordDecode log --all --full-history --source --name-status)",
+      "Bash(git -C /mnt/c/Users/eyan/Downloads/WordDecode log --all -p --grep=\"analyze-text\")",
+      "Bash(git -C /mnt/c/Users/eyan/Downloads/WordDecode show fc89642144494617694761651027341818b40bce -- \"supabase/functions/analyze-text/\")",
+      "Bash(git -C /mnt/c/Users/eyan/Downloads/WordDecode log --all --oneline)",
+      "Bash(git:*)"
+    ]
+  }
+}
